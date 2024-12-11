@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 import csv
 import copy
 import argparse
@@ -45,7 +43,7 @@ def get_args():
 
 
 def main():
-    # Argument parsing #################################################################
+    # argument parsing 
     args = get_args()
 
     cap_device = args.device
@@ -60,12 +58,12 @@ def main():
 
     use_brect = True
 
-    # Camera preparation ###############################################################
+    # camera preparation
     cap = cv.VideoCapture(cap_device)
     cap.set(cv.CAP_PROP_FRAME_WIDTH, cap_width)
     cap.set(cv.CAP_PROP_FRAME_HEIGHT, cap_height)
 
-    # Load all images from asset folder
+    # load images for photo gallery
     image_files = sorted(glob.glob('asset/img*.jpg'))
     overlay_images = []
     desired_width = 200
@@ -85,10 +83,10 @@ def main():
     current_image_index = 0
     current_angle = 0
     current_scale = 1.
-    gesture_counter = 0
+    finger_counter = 0
     last_gesture = None
     
-    # Model load #############################################################
+    # load model weights
     mp_hands = mp.solutions.hands
     hands = mp_hands.Hands(
         static_image_mode=use_static_image_mode,
@@ -100,7 +98,7 @@ def main():
     keypoint_classifier = KeyPointClassifier()
     point_history_classifier = PointHistoryClassifier()
 
-    # Read labels ###########################################################
+    # read labels
     with open('model/keypoint_classifier/keypoint_classifier_label.csv',
               encoding='utf-8-sig') as f:
         keypoint_classifier_labels = csv.reader(f)
@@ -115,31 +113,29 @@ def main():
             row[0] for row in point_history_classifier_labels
         ]
 
-    # FPS Measurement ########################################################
+    # FPS 
     cvFpsCalc = CvFpsCalc(buffer_len=10)
 
-    # Coordinate history #################################################################
+    # deque init
     history_length = 16
     point_history = deque(maxlen=history_length)
     drag_history = deque(maxlen=history_length)
     paint_history = deque(maxlen=128)
-
-    # Finger gesture history ################################################
     finger_gesture_history = deque(maxlen=history_length)
 
-    #  ########################################################################
     mode = 0
 
+    # app starts
     while True:
         fps = cvFpsCalc.get()
 
-        # Process Key (ESC: end) #################################################
+        # to end app
         key = cv.waitKey(10)
         if key == 27:  # ESC
             break
         number, mode = select_mode(key, mode)
 
-        # Camera capture #####################################################
+        # camera reading
         ret, image = cap.read()
         if not ret:
             break
@@ -147,32 +143,31 @@ def main():
             image = cv.flip(image, 1)  # Mirror display
         debug_image = copy.deepcopy(image)
 
-        # Detection implementation #############################################################
+        # hand detection
         image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
 
         image.flags.writeable = False
         results = hands.process(image)
         image.flags.writeable = True
 
-        #  ####################################################################
         if results.multi_hand_landmarks is not None:
             for hand_landmarks, handedness in zip(results.multi_hand_landmarks,
                                                 results.multi_handedness):
-                # Bounding box calculation
+                # bounding box calculation
                 brect = calc_bounding_rect(debug_image, hand_landmarks)
-                # Landmark calculation
+                # landmark calculation
                 landmark_list = calc_landmark_list(debug_image, hand_landmarks)
 
-                # Conversion to relative coordinates / normalized coordinates
+                # conversion to relative coordinates / normalized coordinates
                 pre_processed_landmark_list = pre_process_landmark(
                     landmark_list)
                 pre_processed_point_history_list = pre_process_point_history(
                     debug_image, point_history)                
-                # Write to the dataset file
+                # write to the dataset file
                 logging_csv(number, mode, pre_processed_landmark_list,
                             pre_processed_point_history_list)
 
-                # Hand sign classification
+                # hand sign classification
                 hand_sign_id = keypoint_classifier(pre_processed_landmark_list)
                 if hand_sign_id == 0:
                     paint_history.clear()
@@ -189,56 +184,55 @@ def main():
                     point_history.append([0, 0])
                     paint_history.append([0, 0])
 
-                # Finger gesture classification
+                # finger motion classification
                 finger_gesture_id = 0
                 point_history_len = len(pre_processed_point_history_list)
                 if point_history_len == (history_length * 2):
                     finger_gesture_id = point_history_classifier(
                         pre_processed_point_history_list)
 
-                # Calculates the gesture IDs in the latest detection
+                # calculate the gesture IDs in the latest detection
                 finger_gesture_history.append(finger_gesture_id)
                 most_common_fg_id = Counter(
                     finger_gesture_history).most_common()
 
-                # Check for consecutive gestures
-                current_gesture = most_common_fg_id[0][0]
+                # check for consecutive gestures
+                current_finger_motion = most_common_fg_id[0][0]
                 
-                if current_gesture == last_gesture:
-                    gesture_counter += 1
+                if current_finger_motion == last_gesture:
+                    finger_counter += 1
                 else:
-                    gesture_counter = 1
+                    finger_counter = 1
                 
-                last_gesture = current_gesture
+                last_gesture = current_finger_motion
                 
-                # Change image if consecutive gestures detected
-                if gesture_counter >= 15:
+                # change image if consecutive gestures detected
+                if finger_counter >= 15:
 
-                    if current_gesture == 3:
-                        # Move forward to next image
+                    if current_finger_motion == 3:
+                        # to next image
                         current_image_index = (current_image_index + 1) % len(overlay_images)
-                        gesture_counter = 0
-                    if current_gesture == 4:
-                        # Move backward to previous image
+                        finger_counter = 0
+                    if current_finger_motion == 4:
+                        # previous image
                         current_image_index = (current_image_index - 1) % len(overlay_images)
-                        gesture_counter = 0
+                        finger_counter = 0
 
-                    if current_gesture == 1:  # Clockwise rotation
+                    if current_finger_motion == 1:  # clockwise rotation
                         current_angle = (current_angle - 15) % 360
-                        gesture_counter = 0
-                    if current_gesture == 2:  # Counter-clockwise rotation
+                        finger_counter = 0
+                    if current_finger_motion == 2:  # counter-clockwise rotation
                         current_angle = (current_angle + 15) % 360
-                        gesture_counter = 0
+                        finger_counter = 0
 
-                    if current_gesture == 5:  # zoom out
+                    if current_finger_motion == 5:  # zoom out
                         current_scale =  max(current_scale - 0.1, 0.2)
-                        gesture_counter = 0
-                    if current_gesture == 6:  # zoom in
+                        finger_counter = 0
+                    if current_finger_motion == 6:  # zoom in
                         current_scale = min(current_scale + 0.1, 3.0)
-                        gesture_counter = 0
-                # Drawing part
-                # if hand_sign_id == 3:
-                #     debug_image = draw_searchbox(debug_image, landmark_list)
+                        finger_counter = 0
+
+                # drawing
                 debug_image = draw_bounding_rect(use_brect, debug_image, brect)
                 debug_image = draw_info_text(
                     debug_image,
@@ -253,17 +247,18 @@ def main():
             paint_history.append([0, 0])
         
         debug_image = draw_info(debug_image, fps, mode, number)
-        if mode == 0:
+        # switch mode
+        if mode == 0: # Photos
             debug_image = drag_img(debug_image, overlay_images[current_image_index], drag_history, current_angle, current_scale)
             debug_image = draw_point_history(debug_image, point_history)
-        if mode == 1:
+        if mode == 1: # Canvas
             debug_image = draw_paint_history(debug_image, paint_history)
-        if mode == 2:
+        if mode == 2: # Data collection (hand gesture)
             debug_image = draw_landmarks(debug_image, landmark_list)
-        if mode == 3:
+        if mode == 3: # Data collection (finger motion)
             debug_image = draw_point_history(debug_image, point_history)
 
-        cv.imshow('Hand Gesture Recognition', debug_image)
+        cv.imshow('Vision Pro Simulator', debug_image)
 
     cap.release()
     cv.destroyAllWindows()

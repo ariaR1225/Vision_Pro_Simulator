@@ -17,9 +17,9 @@ def select_mode(key, mode):
         mode = 0
     if key == 99:  # c
         mode = 1
-    if key == 107:  # k
-        mode = 2
     if key == 104:  # h
+        mode = 2
+    if key == 102:  # f
         mode = 3
 
     return number, mode
